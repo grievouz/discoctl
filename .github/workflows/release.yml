@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify release
+    if: github.repository_owner == 'grievouz'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate release tag
+        env:
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must look like v1.2.3" >&2
+            exit 1
+          fi
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+
+  upload-assets:
+    name: ${{ matrix.target }}
+    needs: verify
+    if: github.repository_owner == 'grievouz'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            goos: darwin
+            goarch: arm64
+          - target: x86_64-apple-darwin
+            goos: darwin
+            goarch: amd64
+          - target: aarch64-unknown-linux-gnu
+            goos: linux
+            goarch: arm64
+          - target: x86_64-unknown-linux-gnu
+            goos: linux
+            goarch: amd64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          LDFLAGS="-s -w -X github.com/grievouz/discoctl/cmd.version=${VERSION} -X github.com/grievouz/discoctl/cmd.buildDate=${BUILD_DATE}"
+
+          mkdir -p dist
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/discoctl .
+          tar -C dist -czf "discoctl-${TARGET}.tar.gz" discoctl
+          sha256sum "discoctl-${TARGET}.tar.gz" > "discoctl-${TARGET}.tar.gz.sha256"
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          gh release upload "$VERSION_TAG" \
+            "discoctl-${TARGET}.tar.gz" \
+            "discoctl-${TARGET}.tar.gz.sha256" \
+            --clobber
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: upload-assets
+    if: github.repository_owner == 'grievouz'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: grievouz/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
+      - name: Download release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$VERSION_TAG" -R grievouz/discoctl \
+            -p 'discoctl-aarch64-apple-darwin.tar.gz' \
+            -p 'discoctl-x86_64-apple-darwin.tar.gz' \
+            -p 'discoctl-aarch64-unknown-linux-gnu.tar.gz' \
+            -p 'discoctl-x86_64-unknown-linux-gnu.tar.gz' \
+            -D release-assets
+      - name: Update formula
+        env:
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          DARWIN_ARM64_SHA=$(sha256sum release-assets/discoctl-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          DARWIN_AMD64_SHA=$(sha256sum release-assets/discoctl-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          LINUX_ARM64_SHA=$(sha256sum release-assets/discoctl-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          LINUX_AMD64_SHA=$(sha256sum release-assets/discoctl-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+
+          cat > Formula/discoctl.rb <<EOF
+          class Discoctl < Formula
+            desc "Scriptable Discord command-line client"
+            homepage "https://github.com/grievouz/discoctl"
+            version "$VERSION"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/grievouz/discoctl/releases/download/v#{version}/discoctl-aarch64-apple-darwin.tar.gz"
+                sha256 "$DARWIN_ARM64_SHA"
+              end
+              on_intel do
+                url "https://github.com/grievouz/discoctl/releases/download/v#{version}/discoctl-x86_64-apple-darwin.tar.gz"
+                sha256 "$DARWIN_AMD64_SHA"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/grievouz/discoctl/releases/download/v#{version}/discoctl-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "$LINUX_ARM64_SHA"
+              end
+              on_intel do
+                url "https://github.com/grievouz/discoctl/releases/download/v#{version}/discoctl-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "$LINUX_AMD64_SHA"
+              end
+            end
+
+            def install
+              bin.install "discoctl"
+            end
+
+            test do
+              assert_match "discoctl version #{version}", shell_output("#{bin}/discoctl --version")
+              output = shell_output("#{bin}/discoctl status clear --dry-run")
+              assert_match '"action": "clear_custom_status"', output
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/discoctl.rb
+          git commit -m "discoctl $VERSION"
+          git push
