@@ -99,6 +99,7 @@ func runAuthLogin(ctx context.Context, args []string, stdin io.Reader, stdout, s
 	flags.SetOutput(stderr)
 	tokenValue := flags.String("token", "", "import a token passed as an argument (visible in shell history and process listings)")
 	tokenStdin := flags.Bool("token-stdin", false, "read a token from standard input instead of using QR login")
+	localCaptcha := flags.Bool("local-captcha", false, "keep a QR login CAPTCHA on loopback instead of creating a public URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -108,6 +109,9 @@ func runAuthLogin(ctx context.Context, args []string, stdin io.Reader, stdout, s
 
 	if *tokenValue != "" && *tokenStdin {
 		return errors.New("auth login accepts only one of --token or --token-stdin")
+	}
+	if *localCaptcha && (*tokenValue != "" || *tokenStdin) {
+		return errors.New("--local-captcha can only be used with QR login")
 	}
 
 	var (
@@ -123,7 +127,9 @@ func runAuthLogin(ctx context.Context, args []string, stdin io.Reader, stdout, s
 	case *tokenStdin:
 		token, err = readToken(stdin)
 	default:
-		token, err = auth.LoginQR(ctx, stdout)
+		token, err = auth.LoginQR(ctx, stdout, auth.QRLoginOptions{
+			LocalCaptchaOnly: *localCaptcha,
+		})
 	}
 	if err != nil {
 		return err
@@ -177,5 +183,7 @@ Commands:
   logout     Remove credentials from the system keyring
 
 Use 'discoctl auth login --token <token>' for direct argument import. This can
-expose the token in shell history and process listings; --token-stdin avoids that.`)
+expose the token in shell history and process listings; --token-stdin avoids that.
+QR login opens a human-solved browser challenge when required. By default it
+also creates a temporary public localhost.run URL; --local-captcha keeps it local.`)
 }

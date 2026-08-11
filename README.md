@@ -70,7 +70,17 @@ discoctl auth logout
 
 For an ephemeral session, set `DISCOCTL_TOKEN`; it takes precedence over the token stored in the system keyring.
 
-Discord may apply a CAPTCHA risk challenge to the final QR ticket exchange. Discoctl does not automate CAPTCHA solving; retry later or import an existing token. Challenge tokens are never printed.
+Discord may apply a CAPTCHA risk challenge to the final QR ticket exchange. Discoctl automatically opens a one-time, human-solved browser page when this happens; it does not automate solving the CAPTCHA.
+
+By default, Discoctl uses the system `ssh` client to request a temporary HTTPS URL from localhost.run. Open the printed public URL on any device, complete the challenge, and choose **Submit to Discord**. The temporary tunnel and local listener close as soon as the challenge completes or times out.
+
+Keep the challenge on loopback when a public handoff is not wanted:
+
+```sh
+discoctl auth login --local-captcha
+```
+
+The public URL contains a random one-time path. The Discord authentication token, CAPTCHA request token, and CAPTCHA session ID stay inside Discoctl, but the challenge page and one-time hCaptcha response pass through localhost.run, which [terminates HTTPS for HTTP tunnels](https://localhost.run/docs/security/). If OpenSSH or localhost.run is unavailable, Discoctl prints and opens the loopback URL instead.
 
 ## Reading Discord
 

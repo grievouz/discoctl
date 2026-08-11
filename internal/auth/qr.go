@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ayn2op/arikawa/v3/api"
 	"github.com/ayn2op/arikawa/v3/utils/httputil"
 	"github.com/gorilla/websocket"
 	clientgateway "github.com/grievouz/discoctl/internal/gateway"
@@ -28,9 +30,13 @@ type remoteAuthEnvelope struct {
 	Op string `json:"op"`
 }
 
-var ErrCaptchaRequired = errors.New("Discord requires a CAPTCHA for this login; retry QR login later or use 'discoctl auth login --token-stdin'")
+var ErrCaptchaRequired = errors.New("Discord requires a CAPTCHA for this login")
 
-func LoginQR(ctx context.Context, out io.Writer) (string, error) {
+type QRLoginOptions struct {
+	LocalCaptchaOnly bool
+}
+
+func LoginQR(ctx context.Context, out io.Writer, options QRLoginOptions) (string, error) {
 	headers := clienthttp.Headers()
 	headers.Set("User-Agent", clienthttp.BrowserUserAgent())
 
@@ -140,7 +146,7 @@ func LoginQR(ctx context.Context, out io.Writer) (string, error) {
 			if err := json.Unmarshal(data, &payload); err != nil {
 				return "", fmt.Errorf("decode QR login ticket: %w", err)
 			}
-			return exchangeTicket(fingerprint, privateKey, payload.Ticket)
+			return exchangeTicket(ctx, out, fingerprint, privateKey, payload.Ticket, options)
 
 		case "cancel":
 			return "", errors.New("QR login was canceled in the Discord mobile app")
@@ -263,7 +269,14 @@ func decryptUsername(privateKey *rsa.PrivateKey, encryptedPayload string) (strin
 	return username, nil
 }
 
-func exchangeTicket(fingerprint string, privateKey *rsa.PrivateKey, ticket string) (string, error) {
+func exchangeTicket(
+	ctx context.Context,
+	out io.Writer,
+	fingerprint string,
+	privateKey *rsa.PrivateKey,
+	ticket string,
+	options QRLoginOptions,
+) (string, error) {
 	headers := clienthttp.Headers()
 	headers.Set("Referer", "https://discord.com/login")
 	if fingerprint != "" {
@@ -272,7 +285,24 @@ func exchangeTicket(fingerprint string, privateKey *rsa.PrivateKey, ticket strin
 
 	client := clienthttp.NewClient("")
 	client.OnRequest = append(client.OnRequest, httputil.WithHeaders(headers))
-	encryptedToken, err := client.ExchangeRemoteAuthTicket(ticket)
+	encryptedToken, err := exchangeRemoteAuthTicket(client, ticket, nil)
+	if err != nil {
+		challenge, ok := captchaChallengeFromError(err)
+		if ok {
+			if challenge.Service != "" && challenge.Service != "hcaptcha" {
+				return "", fmt.Errorf("exchange QR login ticket: unsupported CAPTCHA service %q", challenge.Service)
+			}
+			fmt.Fprintln(out, "Discord requires a CAPTCHA. Opening a one-time browser challenge...")
+			solution, solveErr := solveCaptcha(ctx, out, challenge, !options.LocalCaptchaOnly)
+			if solveErr != nil {
+				return "", fmt.Errorf("solve QR login CAPTCHA: %w", solveErr)
+			}
+
+			captchaHeaders := captchaRequestHeaders(challenge, solution)
+			encryptedToken, err = exchangeRemoteAuthTicket(client, ticket, captchaHeaders)
+			solution = ""
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("exchange QR login ticket: %w", sanitizedRemoteAuthError(err))
 	}
@@ -287,21 +317,34 @@ func exchangeTicket(fingerprint string, privateKey *rsa.PrivateKey, ticket strin
 	return string(token), nil
 }
 
+func exchangeRemoteAuthTicket(client *api.Client, ticket string, headers http.Header) (string, error) {
+	body := struct {
+		Ticket string `json:"ticket"`
+	}{Ticket: ticket}
+	var response struct {
+		EncryptedToken string `json:"encrypted_token"`
+	}
+	options := []httputil.RequestOption{httputil.WithJSONBody(body)}
+	if len(headers) > 0 {
+		options = append(options, httputil.WithHeaders(headers))
+	}
+	err := client.RequestJSON(
+		&response,
+		"POST",
+		api.EndpointRemoteAuthLogin,
+		options...,
+	)
+	return response.EncryptedToken, err
+}
+
 func sanitizedRemoteAuthError(err error) error {
-	var httpErr httputil.HTTPError
-	if !errors.As(err, &httpErr) {
+	httpErr, ok := discordHTTPError(err)
+	if !ok {
 		return err
 	}
 
-	var challenge struct {
-		CaptchaKey []string `json:"captcha_key"`
-	}
-	if json.Unmarshal(httpErr.Body, &challenge) == nil {
-		for _, key := range challenge.CaptchaKey {
-			if key == "captcha-required" {
-				return ErrCaptchaRequired
-			}
-		}
+	if _, ok := captchaChallengeFromHTTPError(httpErr); ok {
+		return ErrCaptchaRequired
 	}
 	if httpErr.Code > 0 {
 		return fmt.Errorf("Discord returned HTTP %d error code %d", httpErr.Status, httpErr.Code)
