@@ -5,7 +5,7 @@ Discoctl is a scriptable command-line client for reading and interacting with Di
 > [!IMPORTANT]
 > Automating a normal Discord user account is against Discord's Terms of Service and may result in account termination. Discoctl is not affiliated with or endorsed by Discord.
 
-Discoctl is under active development. Its command output is JSON by default so it can be consumed without scraping terminal UI output.
+Discoctl is under active development. Successful command output is compact, schema-versioned JSON by default so it can be consumed without scraping terminal UI output. Add `--pretty` to indent the same JSON for humans; `--json` remains accepted when callers want to state the default explicitly.
 
 ## Installation
 
@@ -85,24 +85,48 @@ The public URL contains a random one-time path. The Discord authentication token
 ## Reading Discord
 
 ```sh
-discoctl guilds list --json
-discoctl channels list --guild <guild-id> --json
-discoctl messages list --channel <channel-id> --limit 50 --json
-discoctl messages get --channel <channel-id> --message <message-id> --json
-discoctl inbox unread --json
-discoctl inbox unread --all --json
-discoctl emojis list --guild <guild-id> --json
+discoctl guilds list
+discoctl channels list --guild <guild-id>
+discoctl messages list --channel <channel-id> --limit 50
+discoctl messages get --channel <channel-id> --message <message-id>
+discoctl inbox unread
+discoctl inbox unread --all
+discoctl emojis list --guild <guild-id>
+discoctl inbox unread --messages --pretty
 ```
 
 `inbox unread` is mentions-only by default, including mentions in muted channels. Add `--all` for ordinary unread channels and `--messages` for a bounded context window. Ordinary unread DMs appear with `--all`. Fetching messages never marks them read.
 
 Message history is emitted oldest-to-newest and includes pagination cursors. Discord snowflakes are always JSON strings.
 
+## Error contract
+
+Failures write one compact JSON object to standard error and return a nonzero process exit code. Successful data remains on standard output. Callers should branch on the stable `error.code`; `error.message` is intended for people and may be reworded. `error.details` contains machine-readable context when available.
+
+```json
+{"schema_version":"1","error":{"code":"channel_unread","message":"Discord command: channel 123 has unread messages","retryable":false,"details":{"channel_id":"123","read_cursor":"456","latest_message_id":"789"}}}
+```
+
+Exit codes group errors into broad handling categories:
+
+| Exit | Meaning |
+| ---: | --- |
+| `1` | Unexpected or unclassified failure |
+| `2` | Invalid command arguments |
+| `3` | Authentication is required or failed |
+| `4` | Discord resource not found |
+| `5` | Permission denied |
+| `6` | Conflict or safety precondition failed |
+| `7` | Temporary or retryable failure |
+
+Known semantic codes include `invalid_arguments`, `authentication_required`, `authentication_failed`, `not_found`, `permission_denied`, `channel_unread`, `read_state_unverifiable`, `channel_advanced`, `conflict`, `rate_limited`, `request_timeout`, `discord_unavailable`, and `internal_error`. Retry only when `retryable` is `true`.
+
 ## Sending and replying
 
 ```sh
 discoctl messages send --channel <channel-id> --msg "hello"
 discoctl messages reply --channel <channel-id> --message <message-id> --text "hello"
+discoctl messages reply --channel <channel-id> --message <message-id> --expected-latest <latest-message-id> --text "hello"
 printf '%s' "hello" | discoctl messages reply --channel <channel-id> --message <message-id> --stdin
 discoctl messages send --channel <channel-id> --msg "hello" --dry-run
 discoctl reactions add --channel <channel-id> --message <message-id> --emoji "üëç"
@@ -111,6 +135,8 @@ discoctl reactions add --channel <channel-id> --message <message-id> --emoji "ü
 Discord-style mention parsing is enabled by default, and replies ping their author. Use `--no-mentions`, one of the granular `--no-*-mentions` flags, or `--no-ping-reply-author` when those notifications are unwanted. Pass `--nonce` when a caller needs a stable client nonce across retries.
 
 Sends and replies fail closed unless the channel's read cursor is at or beyond its latest message. Use `--ignore-unread` to bypass that guard explicitly. The check is a snapshot immediately before sending; Discord does not provide an atomic check-and-send operation.
+
+Use `--expected-latest <message-id>` to additionally require that the conversation has not advanced since it was inspected. `--ignore-unread` does not bypass this explicit precondition. Both checks share the same latest-message snapshot immediately before sending.
 
 Explicit channel and message IDs are canonical for message actions. Discord message URLs and `channelID/messageID` references remain accepted as conveniences. Reaction writes use the same unread guard.
 

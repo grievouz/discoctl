@@ -50,7 +50,7 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	case "status":
 		return runStatus(ctx, args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("unknown command %q; run 'discoctl help'", args[0])
+		return invalidArgumentsf("unknown command %q; run 'discoctl help'", args[0])
 	}
 }
 
@@ -68,7 +68,7 @@ func runAuth(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return runAuthLogin(ctx, args[1:], stdin, stdout, stderr)
 	case "status":
 		if len(args) != 1 {
-			return errors.New("auth status does not accept arguments")
+			return invalidArguments(errors.New("auth status does not accept arguments"))
 		}
 		_, source, err := auth.LoadToken()
 		if err != nil {
@@ -82,7 +82,7 @@ func runAuth(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return nil
 	case "logout":
 		if len(args) != 1 {
-			return errors.New("auth logout does not accept arguments")
+			return invalidArguments(errors.New("auth logout does not accept arguments"))
 		}
 		if err := auth.DeleteToken(); err != nil {
 			return err
@@ -90,7 +90,7 @@ func runAuth(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stdout, "removed stored credentials")
 		return nil
 	default:
-		return fmt.Errorf("unknown auth command %q; run 'discoctl auth help'", args[0])
+		return invalidArgumentsf("unknown auth command %q; run 'discoctl auth help'", args[0])
 	}
 }
 
@@ -100,18 +100,18 @@ func runAuthLogin(ctx context.Context, args []string, stdin io.Reader, stdout, s
 	tokenValue := flags.String("token", "", "import a token passed as an argument (visible in shell history and process listings)")
 	tokenStdin := flags.Bool("token-stdin", false, "read a token from standard input instead of using QR login")
 	localCaptcha := flags.Bool("local-captcha", false, "keep a QR login CAPTCHA on loopback instead of creating a public URL")
-	if err := flags.Parse(args); err != nil {
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("auth login does not accept positional arguments")
+		return invalidArguments(errors.New("auth login does not accept positional arguments"))
 	}
 
 	if *tokenValue != "" && *tokenStdin {
-		return errors.New("auth login accepts only one of --token or --token-stdin")
+		return invalidArguments(errors.New("auth login accepts only one of --token or --token-stdin"))
 	}
 	if *localCaptcha && (*tokenValue != "" || *tokenStdin) {
-		return errors.New("--local-captcha can only be used with QR login")
+		return invalidArguments(errors.New("--local-captcha can only be used with QR login"))
 	}
 
 	var (
@@ -122,7 +122,7 @@ func runAuthLogin(ctx context.Context, args []string, stdin io.Reader, stdout, s
 	case *tokenValue != "":
 		token = strings.TrimSpace(*tokenValue)
 		if token == "" {
-			return errors.New("token is empty")
+			return invalidArguments(errors.New("token is empty"))
 		}
 	case *tokenStdin:
 		token, err = readToken(stdin)
@@ -148,11 +148,11 @@ func readToken(r io.Reader) (string, error) {
 		return "", fmt.Errorf("read token: %w", err)
 	}
 	if len(b) > maxTokenBytes {
-		return "", errors.New("token exceeds maximum size")
+		return "", invalidArguments(errors.New("token exceeds maximum size"))
 	}
 	token := strings.TrimSpace(string(b))
 	if token == "" {
-		return "", errors.New("token is empty")
+		return "", invalidArguments(errors.New("token is empty"))
 	}
 	return token, nil
 }

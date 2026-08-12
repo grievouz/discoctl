@@ -16,7 +16,7 @@ func withDiscordClient(ctx context.Context, fn func(*discordclient.Client) error
 	token, _, err := auth.LoadToken()
 	if err != nil {
 		if errors.Is(err, auth.ErrNoToken) {
-			return errors.New("not authenticated; run 'discoctl auth login'")
+			return authenticationRequired(errors.New("not authenticated; run 'discoctl auth login'"))
 		}
 		return err
 	}

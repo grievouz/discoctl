@@ -66,15 +66,15 @@ func runProfile(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	case "update":
 		return runProfileUpdate(ctx, args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("unknown profile command %q; run 'discoctl profile help'", args[0])
+		return invalidArgumentsf("unknown profile command %q; run 'discoctl profile help'", args[0])
 	}
 }
 
 func runProfileShow(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("profile show", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
@@ -85,7 +85,7 @@ func runProfileShow(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			return fmt.Errorf("get current profile: %w", err)
 		}
-		return writeJSON(stdout, newProfileView(*user), nil, nil)
+		return output.writeJSON(stdout, newProfileView(*user), nil, nil)
 	})
 }
 
@@ -105,18 +105,18 @@ func runProfileUpdate(ctx context.Context, args []string, stdout, stderr io.Writ
 	bannerPath := flags.String("banner", "", "path to a PNG, JPEG, or GIF banner")
 	clearBanner := flags.Bool("clear-banner", false, "remove the profile banner")
 	dryRun := flags.Bool("dry-run", false, "validate and print the update without connecting to Discord")
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("profile update: %w", err)
 	}
 	if (*bio != "" && *clearBio) || (*color != "" && *clearColor) || (*avatarPath != "" && *clearAvatar) || (*bannerPath != "" && *clearBanner) {
-		return errors.New("a profile field cannot be set and cleared in the same update")
+		return invalidArguments(errors.New("a profile field cannot be set and cleared in the same update"))
 	}
 	if utf16Length(*bio) > maxProfileBioLength {
-		return fmt.Errorf("profile bio exceeds %d characters", maxProfileBioLength)
+		return invalidArgumentsf("profile bio exceeds %d characters", maxProfileBioLength)
 	}
 
 	profileFields := make(map[string]any)
@@ -146,7 +146,7 @@ func runProfileUpdate(ctx context.Context, args []string, stdout, stderr io.Writ
 	if *avatarPath != "" || *clearAvatar {
 		image, imagePlan, err := prepareProfileImage(*avatarPath, *clearAvatar)
 		if err != nil {
-			return fmt.Errorf("avatar: %w", err)
+			return invalidArgumentsf("avatar: %w", err)
 		}
 		accountFields["avatar"] = image
 		plan.Avatar = &imagePlan
@@ -155,17 +155,17 @@ func runProfileUpdate(ctx context.Context, args []string, stdout, stderr io.Writ
 	if *bannerPath != "" || *clearBanner {
 		image, imagePlan, err := prepareProfileImage(*bannerPath, *clearBanner)
 		if err != nil {
-			return fmt.Errorf("banner: %w", err)
+			return invalidArgumentsf("banner: %w", err)
 		}
 		accountFields["banner"] = image
 		plan.Banner = &imagePlan
 		plan.Fields = append(plan.Fields, "banner")
 	}
 	if len(plan.Fields) == 0 {
-		return errors.New("profile update requires at least one field")
+		return invalidArguments(errors.New("profile update requires at least one field"))
 	}
 	if *dryRun {
-		return writeJSON(stdout, plan, nil, nil)
+		return output.writeJSON(stdout, plan, nil, nil)
 	}
 
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
@@ -198,7 +198,7 @@ func runProfileUpdate(ctx context.Context, args []string, stdout, stderr io.Writ
 			view := newProfileView(*user)
 			result.Profile = &view
 		}
-		return writeJSON(stdout, result, nil, nil)
+		return output.writeJSON(stdout, result, nil, nil)
 	})
 }
 
@@ -222,11 +222,11 @@ func newProfileView(user discord.User) profileView {
 func parseProfileColor(value string) (int, string, error) {
 	normalized := strings.TrimPrefix(strings.TrimSpace(value), "#")
 	if len(normalized) != 6 {
-		return 0, "", errors.New("profile color must contain exactly six hexadecimal digits")
+		return 0, "", invalidArguments(errors.New("profile color must contain exactly six hexadecimal digits"))
 	}
 	parsed, err := strconv.ParseUint(normalized, 16, 24)
 	if err != nil {
-		return 0, "", fmt.Errorf("invalid profile color %q: %w", value, err)
+		return 0, "", invalidArgumentsf("invalid profile color %q: %w", value, err)
 	}
 	return int(parsed), "#" + strings.ToUpper(normalized), nil
 }
@@ -262,12 +262,12 @@ func prepareProfileImage(path string, clear bool) (*api.Image, profileImagePlan,
 
 func printProfileUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
-  discoctl profile show [--json]
+  discoctl profile show [--pretty] [--json]
   discoctl profile update [--bio <text> | --clear-bio]
       [--color <#RRGGBB> | --clear-color]
       [--avatar <file> | --clear-avatar]
       [--banner <file> | --clear-banner]
-      [--dry-run] [--json]
+      [--dry-run] [--pretty] [--json]
 
 Image files are limited to 10 MiB and must be PNG, JPEG, or GIF. A multi-field
 profile update is not atomic; use --dry-run to validate it first.`)

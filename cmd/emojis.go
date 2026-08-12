@@ -28,21 +28,21 @@ func runEmojis(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return nil
 	}
 	if args[0] != "list" {
-		return fmt.Errorf("unknown emojis command %q; run 'discoctl emojis help'", args[0])
+		return invalidArgumentsf("unknown emojis command %q; run 'discoctl emojis help'", args[0])
 	}
 
 	flags := flag.NewFlagSet("emojis list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	guildValue := flags.String("guild", "", "guild ID")
-	addJSONFlag(flags)
-	if err := flags.Parse(args[1:]); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("emojis list: %w", err)
 	}
 	if *guildValue == "" {
-		return errors.New("emojis list requires --guild <guild-id>")
+		return invalidArguments(errors.New("emojis list requires --guild <guild-id>"))
 	}
 	guildID, err := parseGuildID(*guildValue)
 	if err != nil {
@@ -77,12 +77,12 @@ func runEmojis(ctx context.Context, args []string, stdout, stderr io.Writer) err
 				URL:       emoji.EmojiURL(),
 			}
 		}
-		return writeJSON(stdout, views, nil, nil)
+		return output.writeJSON(stdout, views, nil, nil)
 	})
 }
 
 func printEmojisUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: discoctl emojis list --guild <guild-id> [--json]
+	fmt.Fprintln(w, `Usage: discoctl emojis list --guild <guild-id> [--pretty] [--json]
 
 Lists custom guild emojis and the exact syntax accepted in message text.`)
 }

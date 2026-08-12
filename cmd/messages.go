@@ -44,7 +44,7 @@ func runMessages(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	case "reply":
 		return runMessagesReply(ctx, args[1:], stdin, stdout, stderr)
 	default:
-		return fmt.Errorf("unknown messages command %q; run 'discoctl messages help'", args[0])
+		return invalidArgumentsf("unknown messages command %q; run 'discoctl messages help'", args[0])
 	}
 }
 
@@ -56,21 +56,21 @@ func runMessagesList(ctx context.Context, args []string, stdout, stderr io.Write
 	afterValue := flags.String("after", "", "return messages after this message ID")
 	aroundValue := flags.String("around", "", "return messages around this message ID")
 	limit := flags.Int("limit", defaultMessageLimit, "maximum number of messages (1-100)")
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("messages list: %w", err)
 	}
 	if *channelValue == "" {
-		return errors.New("messages list requires --channel <channel-id>")
+		return invalidArguments(errors.New("messages list requires --channel <channel-id>"))
 	}
 	if *limit < 1 || *limit > maxMessageLimit {
-		return fmt.Errorf("messages list --limit must be between 1 and %d", maxMessageLimit)
+		return invalidArgumentsf("messages list --limit must be between 1 and %d", maxMessageLimit)
 	}
 	if setCount(*beforeValue, *afterValue, *aroundValue) > 1 {
-		return errors.New("messages list accepts only one of --before, --after, or --around")
+		return invalidArguments(errors.New("messages list accepts only one of --before, --after, or --around"))
 	}
 
 	channelID, err := parseChannelID(*channelValue)
@@ -100,7 +100,7 @@ func runMessagesList(ctx context.Context, args []string, stdout, stderr io.Write
 			views[i] = newMessageView(message)
 		}
 		page := newMessagePage(messages, *limit, hasMore, factual)
-		return writeJSON(stdout, views, page, nil)
+		return output.writeJSON(stdout, views, page, nil)
 	})
 }
 
@@ -109,15 +109,15 @@ func runMessagesGet(ctx context.Context, args []string, stdout, stderr io.Writer
 	flags.SetOutput(stderr)
 	channelValue := flags.String("channel", "", "channel ID")
 	messageValue := flags.String("message", "", "message ID")
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("messages get: %w", err)
 	}
 	if *channelValue == "" || *messageValue == "" {
-		return errors.New("messages get requires --channel <channel-id> and --message <message-id>")
+		return invalidArguments(errors.New("messages get requires --channel <channel-id> and --message <message-id>"))
 	}
 	channelID, err := parseChannelID(*channelValue)
 	if err != nil {
@@ -133,7 +133,7 @@ func runMessagesGet(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			return fmt.Errorf("get message: %w", err)
 		}
-		return writeJSON(stdout, newMessageView(*message), nil, nil)
+		return output.writeJSON(stdout, newMessageView(*message), nil, nil)
 	})
 }
 
@@ -221,8 +221,9 @@ func setCount(values ...string) int {
 func printMessagesUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
   discoctl messages list --channel <channel-id> [--limit 50]
-      [--before <message-id> | --after <message-id> | --around <message-id>] [--json]
-  discoctl messages get --channel <channel-id> --message <message-id> [--json]
+      [--before <message-id> | --after <message-id> | --around <message-id>]
+      [--pretty] [--json]
+  discoctl messages get --channel <channel-id> --message <message-id> [--pretty] [--json]
 
 Run 'discoctl messages send --help' or 'discoctl messages reply --help' for
 the state-changing commands.

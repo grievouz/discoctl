@@ -16,13 +16,13 @@ func runGuilds(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return nil
 	}
 	if args[0] != "list" {
-		return fmt.Errorf("unknown guilds command %q; run 'discoctl guilds help'", args[0])
+		return invalidArgumentsf("unknown guilds command %q; run 'discoctl guilds help'", args[0])
 	}
 
 	flags := flag.NewFlagSet("guilds list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	addJSONFlag(flags)
-	if err := flags.Parse(args[1:]); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
@@ -45,12 +45,12 @@ func runGuilds(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		for i, guild := range guilds {
 			views[i] = newGuildView(guild)
 		}
-		return writeJSON(stdout, views, nil, nil)
+		return output.writeJSON(stdout, views, nil, nil)
 	})
 }
 
 func printGuildsUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: discoctl guilds list [--json]
+	fmt.Fprintln(w, `Usage: discoctl guilds list [--pretty] [--json]
 
 Lists guilds visible to the authenticated profile. IDs are serialized as strings.`)
 }

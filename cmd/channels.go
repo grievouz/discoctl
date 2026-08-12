@@ -17,21 +17,21 @@ func runChannels(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return nil
 	}
 	if args[0] != "list" {
-		return fmt.Errorf("unknown channels command %q; run 'discoctl channels help'", args[0])
+		return invalidArgumentsf("unknown channels command %q; run 'discoctl channels help'", args[0])
 	}
 
 	flags := flag.NewFlagSet("channels list", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	guildValue := flags.String("guild", "", "guild ID")
-	addJSONFlag(flags)
-	if err := flags.Parse(args[1:]); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("channels list: %w", err)
 	}
 	if *guildValue == "" {
-		return errors.New("channels list requires --guild <guild-id>")
+		return invalidArguments(errors.New("channels list requires --guild <guild-id>"))
 	}
 	guildID, err := parseGuildID(*guildValue)
 	if err != nil {
@@ -54,12 +54,12 @@ func runChannels(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		for i, channel := range channels {
 			views[i] = newChannelView(channel)
 		}
-		return writeJSON(stdout, views, nil, nil)
+		return output.writeJSON(stdout, views, nil, nil)
 	})
 }
 
 func printChannelsUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: discoctl channels list --guild <guild-id> [--json]
+	fmt.Fprintln(w, `Usage: discoctl channels list --guild <guild-id> [--pretty] [--json]
 
 Lists the channels in one guild. Use the returned channel IDs with messages commands.`)
 }

@@ -18,15 +18,16 @@ import (
 const maxMessageInputBytes = 16 << 10
 
 type plannedMessage struct {
-	Action          string          `json:"action"`
-	DryRun          bool            `json:"dry_run"`
-	ChannelID       string          `json:"channel_id"`
-	Content         string          `json:"content"`
-	Nonce           string          `json:"nonce,omitempty"`
-	ReplyTo         *messageRefView `json:"reply_to,omitempty"`
-	AllowedMentions []string        `json:"allowed_mentions"`
-	PingReplyAuthor bool            `json:"ping_reply_author"`
-	UnreadGuard     string          `json:"unread_guard"`
+	Action           string          `json:"action"`
+	DryRun           bool            `json:"dry_run"`
+	ChannelID        string          `json:"channel_id"`
+	Content          string          `json:"content"`
+	Nonce            string          `json:"nonce,omitempty"`
+	ReplyTo          *messageRefView `json:"reply_to,omitempty"`
+	AllowedMentions  []string        `json:"allowed_mentions"`
+	PingReplyAuthor  bool            `json:"ping_reply_author"`
+	UnreadGuard      string          `json:"unread_guard"`
+	ExpectedLatestID string          `json:"expected_latest_id,omitempty"`
 }
 
 type messageWriteOptions struct {
@@ -38,12 +39,14 @@ type messageWriteOptions struct {
 	ReadStdin      bool
 	DryRun         bool
 	Nonce          string
+	ExpectedLatest string
 	NoMentions     bool
 	NoUserMentions bool
 	NoRoleMentions bool
 	NoEveryone     bool
 	NoPingReply    bool
 	IgnoreUnread   bool
+	Output         *outputOptions
 }
 
 func runMessagesSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -55,7 +58,7 @@ func runMessagesSend(ctx context.Context, args []string, stdin io.Reader, stdout
 	flags.SetOutput(stderr)
 	options := addMessageWriteFlags(flags)
 	replyValue := flags.String("reply", "", "reply to a message URL, channelID/messageID, or message ID")
-	if err := flags.Parse(args); err != nil {
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
@@ -78,11 +81,11 @@ func runMessagesReply(ctx context.Context, args []string, stdin io.Reader, stdou
 	flags.SetOutput(stderr)
 	options := addMessageWriteFlags(flags)
 	messageValue := flags.String("message", "", "message ID (requires --channel)")
-	if err := flags.Parse(args); err != nil {
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() > 1 || (flags.NArg() == 1 && referenceValue != "") {
-		return errors.New("messages reply accepts one message reference")
+		return invalidArguments(errors.New("messages reply accepts one message reference"))
 	}
 	if flags.NArg() == 1 {
 		referenceValue = flags.Arg(0)
@@ -90,7 +93,7 @@ func runMessagesReply(ctx context.Context, args []string, stdin io.Reader, stdou
 	options.ReferenceValue = referenceValue
 	options.MessageValue = *messageValue
 	if options.ReferenceValue == "" && options.MessageValue == "" {
-		return errors.New("messages reply requires a message reference or --channel and --message")
+		return invalidArguments(errors.New("messages reply requires a message reference or --channel and --message"))
 	}
 	return executeMessageWrite(ctx, *options, stdin, stdout)
 }
@@ -103,13 +106,14 @@ func addMessageWriteFlags(flags *flag.FlagSet) *messageWriteOptions {
 	flags.BoolVar(&options.ReadStdin, "stdin", false, "read message text from standard input")
 	flags.BoolVar(&options.DryRun, "dry-run", false, "validate and print the payload without connecting to Discord")
 	flags.StringVar(&options.Nonce, "nonce", "", "client nonce for retry deduplication")
+	flags.StringVar(&options.ExpectedLatest, "expected-latest", "", "fail if the channel's latest message ID differs")
 	flags.BoolVar(&options.NoMentions, "no-mentions", false, "disable all mention parsing")
 	flags.BoolVar(&options.NoUserMentions, "no-user-mentions", false, "disable user mention parsing")
 	flags.BoolVar(&options.NoRoleMentions, "no-role-mentions", false, "disable role mention parsing")
 	flags.BoolVar(&options.NoEveryone, "no-everyone", false, "disable @everyone and @here parsing")
 	flags.BoolVar(&options.NoPingReply, "no-ping-reply-author", false, "do not notify the author of a replied-to message")
 	flags.BoolVar(&options.IgnoreUnread, "ignore-unread", false, "send even when the channel has unread messages or its read state is unknown")
-	addJSONFlag(flags)
+	options.Output = addJSONFlag(flags)
 	return options
 }
 
@@ -127,12 +131,16 @@ func executeMessageWrite(ctx context.Context, options messageWriteOptions, stdin
 		channelID = reference.ChannelID
 	}
 	if !channelID.IsValid() {
-		return errors.New("message send requires --channel <channel-id>")
+		return invalidArguments(errors.New("message send requires --channel <channel-id>"))
 	}
 
 	content, err := messageContent(options, stdin)
 	if err != nil {
 		return err
+	}
+	expectedLatest, err := optionalMessageID(options.ExpectedLatest)
+	if err != nil {
+		return fmt.Errorf("invalid --expected-latest: %w", err)
 	}
 	allowedMentions, allowedNames := makeAllowedMentions(options)
 	data := api.SendMessageData{
@@ -158,6 +166,9 @@ func executeMessageWrite(ctx context.Context, options messageWriteOptions, stdin
 		PingReplyAuthor: reference != nil && !options.NoPingReply,
 		UnreadGuard:     "enforced_at_send",
 	}
+	if expectedLatest.IsValid() {
+		planned.ExpectedLatestID = expectedLatest.String()
+	}
 	if options.IgnoreUnread {
 		planned.UnreadGuard = "bypassed"
 	}
@@ -166,21 +177,73 @@ func executeMessageWrite(ctx context.Context, options messageWriteOptions, stdin
 		planned.ReplyTo = &view
 	}
 	if options.DryRun {
-		return writeJSON(stdout, planned, nil, nil)
+		return options.Output.writeJSON(stdout, planned, nil, nil)
 	}
 
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
-		if !options.IgnoreUnread {
-			if err := enforceUnreadGuard(client, channelID); err != nil {
-				return err
-			}
+		if err := enforceMessageWritePreconditions(
+			client,
+			channelID,
+			expectedLatest,
+			options.IgnoreUnread,
+		); err != nil {
+			return err
 		}
 		message, err := client.State.Session.SendMessageComplex(channelID, data)
 		if err != nil {
 			return fmt.Errorf("send message: %w", err)
 		}
-		return writeJSON(stdout, newMessageView(*message), nil, nil)
+		return options.Output.writeJSON(stdout, newMessageView(*message), nil, nil)
 	})
+}
+
+func enforceMessageWritePreconditions(
+	client *discordclient.Client,
+	channelID discord.ChannelID,
+	expectedLatest discord.MessageID,
+	ignoreUnread bool,
+) error {
+	if ignoreUnread && !expectedLatest.IsValid() {
+		return nil
+	}
+	status, err := client.ChannelReadStatus(channelID)
+	if err != nil {
+		if expectedLatest.IsValid() {
+			return fmt.Errorf("check expected latest message: %w", err)
+		}
+		return fmt.Errorf("check unread guard: %w; use --ignore-unread to send anyway", err)
+	}
+	return checkMessageWritePreconditions(channelID, status, expectedLatest, ignoreUnread)
+}
+
+func checkMessageWritePreconditions(
+	channelID discord.ChannelID,
+	status discordclient.ChannelReadStatus,
+	expectedLatest discord.MessageID,
+	ignoreUnread bool,
+) error {
+	if expectedLatest.IsValid() && status.LatestMessageID != expectedLatest {
+		actual := "none"
+		var actualDetail any
+		if status.LatestMessageID.IsValid() {
+			actual = status.LatestMessageID.String()
+			actualDetail = actual
+		}
+		return preconditionFailed(errorCodeChannelAdvanced, map[string]any{
+			"channel_id":                 channelID.String(),
+			"expected_latest_message_id": expectedLatest.String(),
+			"actual_latest_message_id":   actualDetail,
+		}, fmt.Errorf(
+			"channel %s advanced (expected latest message %s, actual latest message %s); refresh the channel before sending",
+			channelID,
+			expectedLatest,
+			actual,
+		))
+	}
+	if ignoreUnread {
+		return nil
+	}
+	return checkUnreadGuard(channelID, status)
 }
 
 func enforceUnreadGuard(client *discordclient.Client, channelID discord.ChannelID) error {
@@ -188,27 +251,38 @@ func enforceUnreadGuard(client *discordclient.Client, channelID discord.ChannelI
 	if err != nil {
 		return fmt.Errorf("check unread guard: %w; use --ignore-unread to send anyway", err)
 	}
+	return checkUnreadGuard(channelID, status)
+}
+
+func checkUnreadGuard(channelID discord.ChannelID, status discordclient.ChannelReadStatus) error {
 	if !status.Verifiable {
-		return fmt.Errorf(
+		return preconditionFailed(errorCodeReadStateUnverifiable, map[string]any{
+			"channel_id":        channelID.String(),
+			"latest_message_id": status.LatestMessageID.String(),
+		}, fmt.Errorf(
 			"channel %s read state cannot be verified (latest message %s, no read cursor); use --ignore-unread to send anyway",
 			channelID,
 			status.LatestMessageID,
-		)
+		))
 	}
 	if status.Unread {
-		return fmt.Errorf(
+		return preconditionFailed(errorCodeChannelUnread, map[string]any{
+			"channel_id":        channelID.String(),
+			"read_cursor":       status.ReadCursor.String(),
+			"latest_message_id": status.LatestMessageID.String(),
+		}, fmt.Errorf(
 			"channel %s has unread messages (read cursor %s, latest message %s); use --ignore-unread to send anyway",
 			channelID,
 			status.ReadCursor,
 			status.LatestMessageID,
-		)
+		))
 	}
 	return nil
 }
 
 func resolveWriteReference(options messageWriteOptions, channelHint discord.ChannelID) (*messageRef, error) {
 	if options.ReferenceValue != "" && options.MessageValue != "" {
-		return nil, errors.New("use either a message reference or --message, not both")
+		return nil, invalidArguments(errors.New("use either a message reference or --message, not both"))
 	}
 	value := options.ReferenceValue
 	if value == "" {
@@ -236,7 +310,7 @@ func messageContent(options messageWriteOptions, stdin io.Reader) (string, error
 		sources++
 	}
 	if sources != 1 {
-		return "", errors.New("provide exactly one of --text, --msg, or --stdin")
+		return "", invalidArguments(errors.New("provide exactly one of --text, --msg, or --stdin"))
 	}
 
 	content := options.Text
@@ -249,15 +323,15 @@ func messageContent(options messageWriteOptions, stdin io.Reader) (string, error
 			return "", fmt.Errorf("read message from stdin: %w", err)
 		}
 		if len(body) > maxMessageInputBytes {
-			return "", errors.New("message input exceeds maximum size")
+			return "", invalidArguments(errors.New("message input exceeds maximum size"))
 		}
 		content = strings.TrimSuffix(string(body), "\n")
 	}
 	if content == "" {
-		return "", errors.New("message text is empty")
+		return "", invalidArguments(errors.New("message text is empty"))
 	}
 	if utf16Length(content) > 2000 {
-		return "", errors.New("message text exceeds Discord's 2000-character limit")
+		return "", invalidArguments(errors.New("message text exceeds Discord's 2000-character limit"))
 	}
 	return content, nil
 }
@@ -317,21 +391,25 @@ func takeLeadingReference(args []string) (string, []string, error) {
 func printMessagesSendUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: discoctl messages send --channel <channel-id>
       (--text <message> | --msg <message> | --stdin) [--reply <message-ref>]
-      [--nonce <nonce>] [--ignore-unread] [--dry-run] [mention options] [--json]
+      [--nonce <nonce>] [--expected-latest <message-id>]
+      [--ignore-unread] [--dry-run] [mention options] [--pretty] [--json]
 
 Mentions are parsed by default. Use --no-mentions or one of the granular
---no-*-mentions flags to suppress them.`)
+--no-*-mentions flags to suppress them. --expected-latest is an additional
+stale-context check and is not bypassed by --ignore-unread.`)
 }
 
 func printMessagesReplyUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
   discoctl messages reply --channel <channel-id> --message <message-id>
       (--text <message> | --msg <message> | --stdin) [--nonce <nonce>]
-      [--ignore-unread] [--dry-run] [mention options] [--json]
+      [--expected-latest <message-id>] [--ignore-unread]
+      [--dry-run] [mention options] [--pretty] [--json]
 
   discoctl messages reply <message-ref> (--text <message> | --msg <message> | --stdin)
 
 Explicit channel and message IDs are the canonical interface. A message URL or
 channelID/messageID reference is accepted as a convenience. Replies ping the
-author by default; use --no-ping-reply-author to suppress that notification.`)
+author by default; use --no-ping-reply-author to suppress that notification.
+--expected-latest is not bypassed by --ignore-unread.`)
 }

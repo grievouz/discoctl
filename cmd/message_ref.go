@@ -26,7 +26,7 @@ type messageRefView struct {
 func parseMessageRef(value string, channelHint discord.ChannelID) (messageRef, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return messageRef{}, errors.New("message reference is empty")
+		return messageRef{}, invalidArguments(errors.New("message reference is empty"))
 	}
 
 	if strings.Contains(value, "://") {
@@ -36,7 +36,7 @@ func parseMessageRef(value string, channelHint discord.ChannelID) (messageRef, e
 	switch len(parts) {
 	case 1:
 		if !channelHint.IsValid() {
-			return messageRef{}, errors.New("a bare message ID requires --channel <channel-id>")
+			return messageRef{}, invalidArguments(errors.New("a bare message ID requires --channel <channel-id>"))
 		}
 		messageID, err := parseMessageID(parts[0])
 		if err != nil {
@@ -49,7 +49,7 @@ func parseMessageRef(value string, channelHint discord.ChannelID) (messageRef, e
 			return messageRef{}, err
 		}
 		if channelHint.IsValid() && channelHint != channelID {
-			return messageRef{}, errors.New("message reference channel does not match --channel")
+			return messageRef{}, invalidArguments(errors.New("message reference channel does not match --channel"))
 		}
 		messageID, err := parseMessageID(parts[1])
 		if err != nil {
@@ -57,24 +57,24 @@ func parseMessageRef(value string, channelHint discord.ChannelID) (messageRef, e
 		}
 		return messageRef{ChannelID: channelID, MessageID: messageID}, nil
 	default:
-		return messageRef{}, errors.New("message reference must be a Discord message URL, channelID/messageID, or a message ID with --channel")
+		return messageRef{}, invalidArguments(errors.New("message reference must be a Discord message URL, channelID/messageID, or a message ID with --channel"))
 	}
 }
 
 func parseMessageURL(value string, channelHint discord.ChannelID) (messageRef, error) {
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return messageRef{}, fmt.Errorf("invalid message URL: %w", err)
+		return messageRef{}, invalidArgumentsf("invalid message URL: %w", err)
 	}
 	host := strings.ToLower(parsed.Hostname())
 	switch host {
 	case "discord.com", "www.discord.com", "canary.discord.com", "ptb.discord.com", "discordapp.com":
 	default:
-		return messageRef{}, fmt.Errorf("unsupported message URL host %q", host)
+		return messageRef{}, invalidArgumentsf("unsupported message URL host %q", host)
 	}
 	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
 	if len(parts) != 4 || parts[0] != "channels" {
-		return messageRef{}, errors.New("Discord message URL must end in /channels/<guild-or-@me>/<channel>/<message>")
+		return messageRef{}, invalidArguments(errors.New("Discord message URL must end in /channels/<guild-or-@me>/<channel>/<message>"))
 	}
 
 	channelID, err := parseChannelID(parts[2])
@@ -82,7 +82,7 @@ func parseMessageURL(value string, channelHint discord.ChannelID) (messageRef, e
 		return messageRef{}, err
 	}
 	if channelHint.IsValid() && channelHint != channelID {
-		return messageRef{}, errors.New("message URL channel does not match --channel")
+		return messageRef{}, invalidArguments(errors.New("message URL channel does not match --channel"))
 	}
 	messageID, err := parseMessageID(parts[3])
 	if err != nil {

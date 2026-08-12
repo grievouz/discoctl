@@ -21,10 +21,12 @@ type warning struct {
 	Count     int    `json:"count,omitempty"`
 }
 
-func writeJSON(w io.Writer, data, page any, warnings []warning) error {
+func (options *outputOptions) writeJSON(w io.Writer, data, page any, warnings []warning) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
+	if options != nil && options.pretty {
+		encoder.SetIndent("", "  ")
+	}
 	return encoder.Encode(envelope{
 		SchemaVersion: schemaVersion,
 		Data:          data,

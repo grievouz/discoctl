@@ -48,15 +48,15 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	case "clear":
 		return runStatusClear(ctx, args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("unknown status command %q; run 'discoctl status help'", args[0])
+		return invalidArgumentsf("unknown status command %q; run 'discoctl status help'", args[0])
 	}
 }
 
 func runStatusShow(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("status show", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
@@ -64,7 +64,7 @@ func runStatusShow(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
 		presence, custom := currentStatus(client)
-		return writeJSON(stdout, newStatusView(presence, custom), nil, nil)
+		return output.writeJSON(stdout, newStatusView(presence, custom), nil, nil)
 	})
 }
 
@@ -79,18 +79,18 @@ func runStatusSet(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	textValue := flags.String("text", "", "custom status text")
 	emojiValue := flags.String("emoji", "", "custom status Unicode emoji or name:emoji-id")
 	dryRun := flags.Bool("dry-run", false, "validate and print the update without connecting to Discord")
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("status set: %w", err)
 	}
 	if *presenceValue == "" && *textValue == "" && *emojiValue == "" {
-		return errors.New("status set requires --presence, --text, or --emoji")
+		return invalidArguments(errors.New("status set requires --presence, --text, or --emoji"))
 	}
 	if utf16Length(*textValue) > maxCustomStatusLength {
-		return fmt.Errorf("custom status exceeds %d characters", maxCustomStatusLength)
+		return invalidArgumentsf("custom status exceeds %d characters", maxCustomStatusLength)
 	}
 	presence, err := parsePresence(*presenceValue)
 	if err != nil {
@@ -115,7 +115,7 @@ func runStatusSet(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Custom:   customStatusViewFromGateway(custom),
 	}
 	if *dryRun {
-		return writeJSON(stdout, plan, nil, nil)
+		return output.writeJSON(stdout, plan, nil, nil)
 	}
 
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
@@ -125,7 +125,7 @@ func runStatusSet(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		if err := client.State.SetStatus(presence, custom); err != nil {
 			return fmt.Errorf("set status: %w", err)
 		}
-		return writeJSON(stdout, newStatusView(presence, custom), nil, nil)
+		return output.writeJSON(stdout, newStatusView(presence, custom), nil, nil)
 	})
 }
 
@@ -133,8 +133,8 @@ func runStatusClear(ctx context.Context, args []string, stdout, stderr io.Writer
 	flags := flag.NewFlagSet("status clear", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	dryRun := flags.Bool("dry-run", false, "print the update without connecting to Discord")
-	addJSONFlag(flags)
-	if err := flags.Parse(args); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
@@ -142,7 +142,7 @@ func runStatusClear(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	plan := statusPlan{Action: "clear_custom_status", DryRun: *dryRun, Presence: "preserve_current"}
 	if *dryRun {
-		return writeJSON(stdout, plan, nil, nil)
+		return output.writeJSON(stdout, plan, nil, nil)
 	}
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
 		presence, _ := currentStatus(client)
@@ -150,7 +150,7 @@ func runStatusClear(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err := client.State.SetStatus(presence, custom); err != nil {
 			return fmt.Errorf("clear custom status: %w", err)
 		}
-		return writeJSON(stdout, newStatusView(presence, nil), nil, nil)
+		return output.writeJSON(stdout, newStatusView(presence, nil), nil, nil)
 	})
 }
 
@@ -167,7 +167,7 @@ func parsePresence(value string) (discord.Status, error) {
 	case "invisible", "offline":
 		return discord.InvisibleStatus, nil
 	default:
-		return "", fmt.Errorf("invalid presence %q; use online, idle, dnd, or invisible", value)
+		return "", invalidArgumentsf("invalid presence %q; use online, idle, dnd, or invisible", value)
 	}
 }
 
@@ -246,11 +246,11 @@ func customStatusViewFromGateway(custom *gateway.CustomUserStatus) *customStatus
 
 func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
-  discoctl status show [--json]
+  discoctl status show [--pretty] [--json]
   discoctl status set [--presence online|idle|dnd|invisible]
       [--text <custom-status>] [--emoji <unicode-or-name:id>]
-      [--dry-run] [--json]
-  discoctl status clear [--dry-run] [--json]
+      [--dry-run] [--pretty] [--json]
+  discoctl status clear [--dry-run] [--pretty] [--json]
 
 If --presence is omitted while setting a custom status, the current presence is
 preserved. Clearing removes the custom status and also preserves presence.`)

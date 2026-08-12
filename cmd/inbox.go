@@ -60,7 +60,7 @@ func runInbox(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return nil
 	}
 	if args[0] != "unread" {
-		return fmt.Errorf("unknown inbox command %q; run 'discoctl inbox help'", args[0])
+		return invalidArgumentsf("unknown inbox command %q; run 'discoctl inbox help'", args[0])
 	}
 
 	flags := flag.NewFlagSet("inbox unread", flag.ContinueOnError)
@@ -69,18 +69,18 @@ func runInbox(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	includeMuted := flags.Bool("include-muted", false, "include muted ordinary unread channels")
 	includeMessages := flags.Bool("messages", false, "include bounded unread message context")
 	limitPerChannel := flags.Int("limit-per-channel", defaultInboxMessageLimit, "maximum context messages per channel (1-100)")
-	addJSONFlag(flags)
-	if err := flags.Parse(args[1:]); err != nil {
+	output := addJSONFlag(flags)
+	if err := parseFlags(flags, args[1:]); err != nil {
 		return err
 	}
 	if err := requireNoPositionals(flags); err != nil {
 		return fmt.Errorf("inbox unread: %w", err)
 	}
 	if *includeMuted && !*includeAll {
-		return errors.New("inbox unread --include-muted requires --all")
+		return invalidArguments(errors.New("inbox unread --include-muted requires --all"))
 	}
 	if *limitPerChannel < 1 || *limitPerChannel > maxMessageLimit {
-		return fmt.Errorf("inbox unread --limit-per-channel must be between 1 and %d", maxMessageLimit)
+		return invalidArgumentsf("inbox unread --limit-per-channel must be between 1 and %d", maxMessageLimit)
 	}
 
 	return withDiscordClient(ctx, func(client *discordclient.Client) error {
@@ -94,7 +94,7 @@ func runInbox(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if *includeAll {
 			mode = "all_unread"
 		}
-		return writeJSON(stdout, entries, inboxPage{
+		return output.writeJSON(stdout, entries, inboxPage{
 			Mode:             mode,
 			IncludeMuted:     *includeMuted,
 			MessagesIncluded: *includeMessages,
@@ -299,7 +299,7 @@ func deduplicateChannelReadStates(states []gateway.ReadState) []gateway.ReadStat
 
 func printInboxUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: discoctl inbox unread [--all] [--include-muted]
-      [--messages] [--limit-per-channel 20] [--json]
+      [--messages] [--limit-per-channel 20] [--pretty] [--json]
 
 The default is mentions-only across the account. Mentions remain visible when muted.
 --all adds ordinary unread channels; --include-muted applies only to those ordinary
