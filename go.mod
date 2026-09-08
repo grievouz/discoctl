@@ -8,7 +8,7 @@ require (
 	github.com/andybalholm/brotli v1.2.2
 	github.com/ayn2op/arikawa/v3 v3.0.0-20260708075022-9cc760fe507e
 	github.com/ayn2op/ningen/v3 v3.0.1-0.20260708075321-0ba1ffc70bd6
-	github.com/bogdanfinn/fhttp v0.6.8
+	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -21,8 +21,9 @@ require (
 	github.com/bdandy/go-errors v1.2.2 // indirect
 	github.com/bdandy/go-socks4 v1.2.3 // indirect
 	github.com/bogdanfinn/quic-go-utls v1.0.9-utls // indirect
-	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
+	github.com/bogdanfinn/utls v1.7.8-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
