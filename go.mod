@@ -5,7 +5,7 @@ go 1.26.0
 // replace github.com/ayn2op/tview => ../tview
 
 require (
-	github.com/andybalholm/brotli v1.2.2
+	github.com/andybalholm/brotli v1.2.7
 	github.com/ayn2op/arikawa/v3 v3.0.0-20260708075022-9cc760fe507e
 	github.com/ayn2op/ningen/v3 v3.0.1-0.20260708075321-0ba1ffc70bd6
 	github.com/bogdanfinn/fhttp v0.6.8
