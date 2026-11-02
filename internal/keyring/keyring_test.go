@@ -11,9 +11,21 @@ const testToken = "abc123"
 
 var testErr = errors.New("boom")
 
+func useMockKeyring(t *testing.T, err error) {
+	t.Helper()
+	previous := tokenStore
+	tokenStore = systemKeyring{}
+	t.Cleanup(func() { tokenStore = previous })
+	if err != nil {
+		zkeyring.MockInitWithError(err)
+		return
+	}
+	zkeyring.MockInit()
+}
+
 func TestSetToken(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		zkeyring.MockInit()
+		useMockKeyring(t, nil)
 
 		if err := SetToken(testToken); err != nil {
 			t.Fatal(err)
@@ -30,7 +42,7 @@ func TestSetToken(t *testing.T) {
 	})
 
 	t.Run("error", func(t *testing.T) {
-		zkeyring.MockInitWithError(testErr)
+		useMockKeyring(t, testErr)
 
 		if err := SetToken(testToken); err == nil {
 			t.Fatal("expected error")
@@ -40,7 +52,7 @@ func TestSetToken(t *testing.T) {
 
 func TestGetToken(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		zkeyring.MockInit()
+		useMockKeyring(t, nil)
 
 		if err := zkeyring.Set(keyringService, keyringUser, testToken); err != nil {
 			t.Fatal(err)
@@ -56,7 +68,7 @@ func TestGetToken(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		zkeyring.MockInit()
+		useMockKeyring(t, nil)
 
 		_, err := GetToken()
 		if !errors.Is(err, zkeyring.ErrNotFound) {
@@ -65,7 +77,7 @@ func TestGetToken(t *testing.T) {
 	})
 
 	t.Run("error", func(t *testing.T) {
-		zkeyring.MockInitWithError(testErr)
+		useMockKeyring(t, testErr)
 
 		if _, err := GetToken(); err == nil {
 			t.Fatal("expected error")
@@ -75,7 +87,7 @@ func TestGetToken(t *testing.T) {
 
 func TestDeleteToken(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		zkeyring.MockInit()
+		useMockKeyring(t, nil)
 
 		if err := zkeyring.Set(keyringService, keyringUser, testToken); err != nil {
 			t.Fatal(err)
@@ -92,7 +104,7 @@ func TestDeleteToken(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		zkeyring.MockInit()
+		useMockKeyring(t, nil)
 
 		if err := DeleteToken(); !errors.Is(err, zkeyring.ErrNotFound) {
 			t.Fatalf("got = %v, want = %v", err, zkeyring.ErrNotFound)
@@ -100,7 +112,7 @@ func TestDeleteToken(t *testing.T) {
 	})
 
 	t.Run("error", func(t *testing.T) {
-		zkeyring.MockInitWithError(testErr)
+		useMockKeyring(t, testErr)
 
 		if err := DeleteToken(); err == nil {
 			t.Fatal("expected error")
