@@ -164,7 +164,7 @@ Commands:
   auth       Manage authentication
   guilds     List accessible guilds
   channels   Inspect guild channels
-  messages   Read channel message history
+  messages   Read, send, edit or delete messages
   inbox      Inspect account-wide unread state
   emojis     List guild emoji syntax
   reactions  Add message reactions

@@ -146,6 +146,24 @@ Use `--expected-latest <message-id>` to additionally require that the conversati
 
 Explicit channel and message IDs are canonical for message actions. Discord message URLs and `channelID/messageID` references remain accepted as conveniences. Reaction writes use the same unread guard.
 
+## Editing and deleting messages
+
+```sh
+discoctl messages edit --channel <channel-id> --message <message-id> --text "corrected text" --dry-run
+discoctl messages edit --channel <channel-id> --message <message-id> --text "corrected text" --no-mentions
+printf '%s' "corrected text" | discoctl messages edit <channel-id>/<message-id> --stdin
+discoctl messages delete --channel <channel-id> --message <message-id> --dry-run
+discoctl messages delete --channel <channel-id> --message <message-id> --yes
+```
+
+Both commands also accept a Discord message URL or `channelID/messageID` instead of the explicit IDs. They enforce the same unread guard as other message writes; `--ignore-unread` explicitly bypasses it. The guard is a snapshot, not an atomic condition on the mutation. Neither command marks messages read. `--dry-run` validates inputs and prints a plan without authentication or a Discord connection; it cannot verify message existence, ownership or permissions.
+
+Editing replaces **only the text of your own message**. Use exactly one of `--text`, `--msg` or `--stdin`. Empty text and text over 2000 UTF-16 code units are rejected, just as for sends. Attachments, embeds, components and flags are not included in the edit request. Mention parsing is enabled by default and is **not inherited from the original message**; use `--no-mentions`, `--no-user-mentions`, `--no-role-mentions` or `--no-everyone` to suppress it explicitly. The edit request does not ping a reply author. Success returns the updated message in the usual JSON envelope.
+
+Deleting is irreversible and requires `--yes` except for a dry run. Only the specified single message is deleted; there is no bulk operation or age cutoff. You can delete your own messages; deleting another author's message in a guild requires `MANAGE_MESSAGES` in that channel. That permission does not allow deleting other people's DM messages. Success returns `action: "delete_message"`, `applied: true`, and the message reference. A missing message is reported as `not_found`, not silently treated as success.
+
+Discord remains authoritative for authorship, channel access and permissions. Rejections retain the existing structured error contract (`permission_denied`/exit 5 for HTTP 403, `not_found`/exit 4 for HTTP 404); no stale local permission guess or bypass is used. These commands use Discord's [Edit Message and Delete Message endpoints](https://docs.discord.com/developers/resources/message#edit-message). Normal-account automation still carries the Terms of Service risk noted above.
+
 ## Profile and status
 
 Inspect or update the account profile:
