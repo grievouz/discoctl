@@ -12,16 +12,36 @@ const (
 	keyringUser    = "token"
 )
 
+type store interface {
+	Get(service, user string) (string, error)
+	Set(service, user, secret string) error
+	Delete(service, user string) error
+}
+
+type systemKeyring struct{}
+
+func (systemKeyring) Get(service, user string) (string, error) {
+	return keyring.Get(service, user)
+}
+
+func (systemKeyring) Set(service, user, secret string) error {
+	return keyring.Set(service, user, secret)
+}
+
+func (systemKeyring) Delete(service, user string) error {
+	return keyring.Delete(service, user)
+}
+
 func GetToken() (string, error) {
-	return keyring.Get(keyringService, keyringUser)
+	return tokenStore.Get(keyringService, keyringUser)
 }
 
 func SetToken(s string) error {
-	return keyring.Set(keyringService, keyringUser, s)
+	return tokenStore.Set(keyringService, keyringUser, s)
 }
 
 func DeleteToken() error {
-	return keyring.Delete(keyringService, keyringUser)
+	return tokenStore.Delete(keyringService, keyringUser)
 }
 
 func IsNotFound(err error) bool {

@@ -21,6 +21,12 @@ Before then, or to build the current `main` branch, use the tap's HEAD formula:
 brew install grievouz/tap/discoctl --HEAD
 ```
 
+With Go installed, install the latest release into `$(go env GOPATH)/bin` (usually `~/go/bin`, which needs to be on your `PATH`):
+
+```sh
+go install github.com/grievouz/discoctl@latest
+```
+
 To install a local checkout under `~/.local/bin`:
 
 ```sh
