@@ -167,7 +167,7 @@ jobs:
             test do
               assert_match "discoctl version #{version}", shell_output("#{bin}/discoctl --version")
               output = shell_output("#{bin}/discoctl status clear --dry-run")
-              assert_match '"action": "clear_custom_status"', output
+              assert_equal "clear_custom_status", JSON.parse(output).fetch("data").fetch("action")
             end
           end
           EOF
