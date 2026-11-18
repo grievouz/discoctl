@@ -41,6 +41,8 @@ func runMessages(ctx context.Context, args []string, stdin io.Reader, stdout, st
 		return runMessagesGet(ctx, args[1:], stdout, stderr)
 	case "send":
 		return runMessagesSend(ctx, args[1:], stdin, stdout, stderr)
+	case "edit", "delete":
+		return runMessageMutation(ctx, args[0], args[1:], stdin, stdout, stderr)
 	case "reply":
 		return runMessagesReply(ctx, args[1:], stdin, stdout, stderr)
 	default:
@@ -225,8 +227,9 @@ func printMessagesUsage(w io.Writer) {
       [--pretty] [--json]
   discoctl messages get --channel <channel-id> --message <message-id> [--pretty] [--json]
 
-Run 'discoctl messages send --help' or 'discoctl messages reply --help' for
-the state-changing commands.
+Run 'discoctl messages edit --help' or 'discoctl messages delete --help' for
+edit/delete options. Run 'discoctl messages send --help' or
+'discoctl messages reply --help' for send/reply options.
 
 History is returned oldest-to-newest and fetching it never marks messages read.`)
 }
